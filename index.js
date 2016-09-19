@@ -1,47 +1,61 @@
-var $ = require('highland');
-var R = require('ramda');
-var harmony = R.compose($, require('harmonyhubjs-client'));
+const IP = process.env.IP; // IP of harmony device
 
+const R = require('ramda');
+const Future = require('ramda-fantasy').Future;
+const harmony = require('harmonyhubjs-client');
 
-var invoke0 = method => R.compose($, R.invoker(0, method));
 /**
- * client -> boolean
+ * Promise -> Future
  */
-var getActivities = R.compose($, invoke0('getActivities'));
+const futurify = promise => Future((reject, resolve) => promise.then(resolve, reject));
 
-console.log('starting');
+/**
+ * method -> obj -> args -> *
+ */
+const invoke = R.curry((method, obj, args) => obj[method].apply(obj, args));
 
-var harmony = $(['192.168.0.199'])
-.flatMap(harmony)
-// .flatMap(invoke0('isOff'))
-.doto($.log)
-.resume();
-return;
+const log = invoke('log', console);
 
-harmony('192.168.0.199')
-  .then(function(harmonyClient) {
-    harmonyClient.isOff()
-      .then(function(off) {
-        if(off) {
-          console.log('Currently off. Turning TV on.');
+/**
+ * IP -> Future client
+ */
+const getClient = R.memoize(R.compose(futurify, harmony));
 
-          harmonyClient.getActivities()
-            .then(function(activities) {
-              activities.some(function(activity) {
-                if(activity.label === 'Watch TV') {
-                  var id = activity.id
-                  harmonyClient.startActivity(id)
-                  harmonyClient.end()
-                  return true
-                }
-                return false
-              })
-            })
-        } else {
-          console.log('Currently on. Turning TV off')
-          harmonyClient.turnOff();
-          harmonyClient.end();
-        }
-      })
-  });
+/**
+ * client -> Future activities
+ */
+const getActivities = R.compose(futurify, x => x.getActivities());
 
+/**
+ * name -> client -> Future activity
+ */
+const findActivityByName = name => R.compose(Future.of, R.find(R.propEq('label', name)));
+
+/**
+ * Future client -> id -> Future
+ */
+const startActivity = R.curry((client, id) => client.map(client => futurify(client.startActivity(id))));
+
+/**
+ * method -> obj -> args -> Future
+ */
+const invokeF = R.compose(futurify, invoke);
+
+/**
+ * ======================================================================================================
+ */
+
+
+/**
+ * The program
+ * Turn on an activity by the name 'Bedroom Lights'
+ */
+var client = getClient(IP);
+
+client
+.chain(getActivities)
+.chain(findActivityByName('Bedroom Lights'))
+.map(R.prop('id'))
+.chain(startActivity(client))
+.fork(log, log)
+;
